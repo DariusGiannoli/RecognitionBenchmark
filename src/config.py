@@ -17,7 +17,11 @@ MODEL_PATHS = {
     'yolo' : PROJECT_ROOT / "volov8n.pt", 
     'resnet': MODEL_DIR / "resnet18.pth",
     'resnet_head': MODEL_DIR / "resnet18_head.pkl",
-    'mobilenet': MODEL_DIR / "mobilenet_v3.pth"
+    'mobilenet': MODEL_DIR / "mobilenet_v3.pth",
+    'mobilevit': MODEL_DIR / "mobilevit_xxs.pth",
+    'mobilevit_head': MODEL_DIR / "mobilevit_head.pkl",
+    'orb_ref': MODEL_DIR / "orb_reference.pkl",
+    'rce_model': MODEL_DIR / "rce_model.pkl"
 }
 
 # Training Results

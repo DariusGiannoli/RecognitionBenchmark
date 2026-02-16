@@ -5,3 +5,7 @@ Benchmarking comparison
 - The Heavyweight Standard: ResNet-18
 - The Modern Challenger: MobileViT (XXS)
 - End-to-End Detector: YOLOv8n
+
+Challenger: RCE + Feature Extraction 
+
+Compare full pipeline (training + recognition) and just recognition
