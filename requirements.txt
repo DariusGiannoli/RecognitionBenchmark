@@ -1,8 +1,6 @@
 streamlit
 opencv-python-headless
 ultralytics
-torch
-torchvision
 pandas
 numpy
 tqdm

@@ -13,6 +13,7 @@ WORKDIR /app
 
 # 4. Copy requirements and install them
 COPY requirements.txt .
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 5. Copy the rest of your project code
