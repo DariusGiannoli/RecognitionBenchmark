@@ -1,11 +1,19 @@
-Benchmarking comparison
+---
+title: PerceptionBenchmark
+emoji: 🦅
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
 
-- The Classical Baseline: ORB (Oriented FAST and Rotated BRIEF)
-- The Efficient Rival: MobileNetV3-Small
-- The Heavyweight Standard: ResNet-18
-- The Modern Challenger: MobileViT (XXS)
-- End-to-End Detector: YOLOv8n
+# Recognition-BenchMark
+This repository is designed to evaluate and compare different computer vision models for object recognition tasks. 
 
-Challenger: RCE + Feature Extraction 
-
-Compare full pipeline (training + recognition) and just recognition
+## Models Included:
+- **The Classical Baseline**: ORB (Oriented FAST and Rotated BRIEF)
+- **The Efficient Rival**: MobileNetV3-Small
+- **The Heavyweight Standard**: ResNet-18
+- **The Modern Challenger**: MobileViT (XXS)
+- **End-to-End Detector**: YOLOv8n
