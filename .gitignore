@@ -11,8 +11,13 @@ data/
 # --- 3. THE RESULTS (Logs & Plots) ---
 # You might want to keep the final report, but not every test run.
 results/logs/
+results/yolo/
 # Optional: Uncomment if you don't want to track generated plots
 results/plots/
+
+# --- 3b. TRAINING RUNS ---
+# YOLO training artifacts: batch images, curves, weights checkpoints
+training/runs/
 
 # --- 4. PYTHON JUNK (Generated files) ---
 # These are compiled Python files that appear automatically.
