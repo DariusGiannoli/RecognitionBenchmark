@@ -8,6 +8,8 @@ app_port: 7860
 pinned: false
 ---
 
+https://huggingface.co/spaces/DariusGiannoli/PerceptionBenchmark#cnn-detection
+
 # Recognition-BenchMark
 This repository is designed to evaluate and compare different computer vision models for object recognition tasks. 
 
