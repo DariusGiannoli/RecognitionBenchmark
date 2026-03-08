@@ -2,6 +2,7 @@ import streamlit as st
 import cv2
 import numpy as np
 import re
+import pandas as pd
 import plotly.graph_objects as go
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,15 +17,15 @@ if "pipeline_data" not in st.session_state or "left" not in st.session_state.get
     st.error("Complete **Data Lab** first.")
     st.stop()
 
-assets   = st.session_state["pipeline_data"]
-img_l    = assets["left"]
-img_r    = assets["right"]
-gt_left  = assets.get("gt_left")      # float32 depth map from PFM
-gt_right = assets.get("gt_right")
-conf_raw = assets.get("conf_raw", "")
-crop_bbox = assets.get("crop_bbox")    # (x0, y0, x1, y1) on LEFT image
+assets    = st.session_state["pipeline_data"]
+img_l     = assets["left"]
+img_r     = assets["right"]
+gt_left   = assets.get("gt_left")       # float32 disparity map from PFM
+gt_right  = assets.get("gt_right")
+conf_raw  = assets.get("conf_raw", "")
+crop_bbox = assets.get("crop_bbox")      # (x0, y0, x1, y1) on LEFT image
 
-rce_dets = st.session_state.get("rce_dets", [])   # list of (x1,y1,x2,y2,label,conf)
+rce_dets = st.session_state.get("rce_dets", [])
 cnn_dets = st.session_state.get("cnn_dets", [])
 
 
@@ -38,6 +39,8 @@ def parse_config(text: str) -> dict:
     cam0 / cam1 are 3×3 matrices in bracket notation: [f 0 cx; 0 f cy; 0 0 1]
     """
     params = {}
+    if not text or not text.strip():
+        return params
     for line in text.strip().splitlines():
         line = line.strip()
         if "=" not in line:
@@ -45,13 +48,9 @@ def parse_config(text: str) -> dict:
         key, val = line.split("=", 1)
         key = key.strip()
         val = val.strip()
-        # Matrix?
         if "[" in val:
             nums = list(map(float, re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", val)))
-            if len(nums) == 9:
-                params[key] = np.array(nums).reshape(3, 3)
-            else:
-                params[key] = nums
+            params[key] = np.array(nums).reshape(3, 3) if len(nums) == 9 else nums
         else:
             try:
                 params[key] = float(val)
@@ -63,10 +62,15 @@ def parse_config(text: str) -> dict:
 calib = parse_config(conf_raw)
 
 # Extract intrinsics
-focal  = calib.get("cam0", np.eye(3))[0, 0] if isinstance(calib.get("cam0"), np.ndarray) else 0.0
-doffs   = float(calib.get("doffs", 0.0))
+cam0 = calib.get("cam0")
+focal    = float(cam0[0, 0]) if isinstance(cam0, np.ndarray) and cam0.shape == (3, 3) else 0.0
+doffs    = float(calib.get("doffs", 0.0))
 baseline = float(calib.get("baseline", 1.0))
 ndisp    = int(calib.get("ndisp", 128))
+
+if focal <= 0:
+    st.warning("Focal length is **0** — the camera config may be missing or malformed. "
+               "Depth values will be zero until you upload a valid Middlebury config in **Data Lab**.")
 
 st.subheader("Camera Calibration")
 cc1, cc2, cc3, cc4 = st.columns(4)
@@ -82,6 +86,15 @@ st.divider()
 
 
 # ===================================================================
+#  Image-size validation
+# ===================================================================
+if img_l.shape[:2] != img_r.shape[:2]:
+    st.error(f"Left ({img_l.shape[1]}×{img_l.shape[0]}) and right "
+             f"({img_r.shape[1]}×{img_r.shape[0]}) images must be the same size.")
+    st.stop()
+
+
+# ===================================================================
 #  Step 1 — Compute Disparity Map
 # ===================================================================
 st.subheader("Step 1: Disparity Map (StereoSGBM)")
@@ -91,36 +104,38 @@ block_size  = sc1.slider("Block Size", 3, 21, 5, step=2)
 p1_mult     = sc2.slider("P1 multiplier", 1, 32, 8)
 p2_mult     = sc3.slider("P2 multiplier", 1, 128, 32)
 
+
 @st.cache_data
-def compute_disparity(_left, _right, _ndisp, _block_size, _p1m, _p2m):
+def compute_disparity(_left, _right, ndisp, block_size, p1m, p2m):
+    """StereoSGBM disparity.  _left/_right are un-hashed (numpy arrays)."""
     gray_l = cv2.cvtColor(_left,  cv2.COLOR_BGR2GRAY)
     gray_r = cv2.cvtColor(_right, cv2.COLOR_BGR2GRAY)
 
-    # Align ndisp to 16
-    nd = max(16, (_ndisp // 16) * 16)
-    channels = 1
+    nd = max(16, (ndisp // 16) * 16)
     sgbm = cv2.StereoSGBM_create(
         minDisparity=0,
         numDisparities=nd,
-        blockSize=_block_size,
-        P1=_p1m * channels * _block_size ** 2,
-        P2=_p2m * channels * _block_size ** 2,
+        blockSize=block_size,
+        P1=p1m * 1 * block_size ** 2,
+        P2=p2m * 1 * block_size ** 2,
         disp12MaxDiff=1,
         uniquenessRatio=10,
         speckleWindowSize=100,
         speckleRange=32,
         mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY,
     )
-    disp = sgbm.compute(gray_l, gray_r).astype(np.float32) / 16.0
-    return disp
+    return sgbm.compute(gray_l, gray_r).astype(np.float32) / 16.0
 
 
-with st.spinner("Computing disparity..."):
-    disp = compute_disparity(img_l, img_r, ndisp, block_size, p1_mult, p2_mult)
+with st.spinner("Computing disparity…"):
+    try:
+        disp = compute_disparity(img_l, img_r, ndisp, block_size, p1_mult, p2_mult)
+    except cv2.error as e:
+        st.error(f"StereoSGBM failed: {e}")
+        st.stop()
 
 # Visualize disparity
-disp_vis = disp.copy()
-disp_vis[disp_vis <= 0] = 0
+disp_vis = np.clip(disp, 0, None)
 disp_max = disp_vis.max() if disp_vis.max() > 0 else 1.0
 disp_norm = (disp_vis / disp_max * 255).astype(np.uint8)
 disp_color = cv2.applyColorMap(disp_norm, cv2.COLORMAP_INFERNO)
@@ -142,8 +157,8 @@ st.caption("Z = depth (mm), f = focal length (px), B = baseline (mm), d = dispar
 # Compute depth from disparity
 valid = (disp + doffs) > 0
 depth_map = np.zeros_like(disp)
-depth_map[valid] = (focal * baseline) / (disp[valid] + doffs)
-depth_map[~valid] = 0
+if focal > 0:
+    depth_map[valid] = (focal * baseline) / (disp[valid] + doffs)
 
 # Visualize
 depth_vis = depth_map.copy()
@@ -173,7 +188,7 @@ if gt_left is not None:
         gt_norm = np.zeros_like(gt_vis, dtype=np.uint8)
     gt_color = cv2.applyColorMap(gt_norm, cv2.COLORMAP_TURBO)
     zc2.image(cv2.cvtColor(gt_color, cv2.COLOR_BGR2RGB),
-              caption="Ground Truth Depth", use_container_width=True)
+              caption="Ground Truth Disparity (from PFM)", use_container_width=True)
 
 
 # ===================================================================
@@ -183,15 +198,20 @@ if gt_left is not None:
     st.divider()
     st.subheader("Step 3: Error Analysis (SGBM vs Ground Truth)")
 
-    # The GT is disparity in PFM for Middlebury; convert to depth for comparison
-    # Middlebury PFM stores DISPARITY, not depth. Let's handle both:
     gt_disp = gt_left   # Middlebury standard: PFM = disparity map
-    gt_depth_from_disp = np.zeros_like(gt_disp)
-    gt_valid = np.isfinite(gt_disp) & (gt_disp + doffs > 0) & (gt_disp != np.inf)
-    gt_depth_from_disp[gt_valid] = (focal * baseline) / (gt_disp[gt_valid] + doffs)
 
-    # Crop to common valid region
+    # Ensure GT and SGBM disparity have the same shape
+    if gt_disp.shape[:2] != disp.shape[:2]:
+        st.warning(
+            f"Ground truth shape ({gt_disp.shape[1]}×{gt_disp.shape[0]}) differs from "
+            f"disparity shape ({disp.shape[1]}×{disp.shape[0]}). Resizing GT to match."
+        )
+        gt_disp = cv2.resize(gt_disp, (disp.shape[1], disp.shape[0]),
+                             interpolation=cv2.INTER_NEAREST)
+
+    gt_valid = np.isfinite(gt_disp) & (gt_disp > 0)
     both_valid = valid & gt_valid
+
     if both_valid.any():
         # Disparity error
         disp_err = np.abs(disp - gt_disp)
@@ -199,9 +219,9 @@ if gt_left is not None:
 
         # Stats
         err_vals = disp_err[both_valid]
-        mae = float(np.mean(err_vals))
+        mae  = float(np.mean(err_vals))
         rmse = float(np.sqrt(np.mean(err_vals ** 2)))
-        bad_2 = float(np.mean(err_vals > 2.0)) * 100  # % of pixels with error > 2px
+        bad_2 = float(np.mean(err_vals > 2.0)) * 100
 
         em1, em2, em3 = st.columns(3)
         em1.metric("MAE (px)", f"{mae:.2f}")
@@ -235,35 +255,31 @@ st.divider()
 st.subheader("Step 4: Object Distance Estimation")
 
 all_dets = []
-if rce_dets:
-    for d in rce_dets:
-        all_dets.append(("RCE", *d))
-if cnn_dets:
-    for d in cnn_dets:
-        all_dets.append(("CNN", *d))
+all_dets.extend(("RCE", *d) for d in rce_dets)
+all_dets.extend(("CNN", *d) for d in cnn_dets)
 
 if not all_dets and crop_bbox is not None:
-    st.info("No detections from the Real-Time Detection page. Using the **crop bounding box on the left image** as a fallback.")
+    st.info("No detections from the Real-Time Detection page. Using the **crop bounding box** as a fallback.")
     x0, y0, x1, y1 = crop_bbox
-    all_dets.append(("Crop (left)", x0, y0, x1, y1, "object", 1.0))
+    all_dets.append(("Crop", x0, y0, x1, y1, "object", 1.0))
 elif not all_dets:
     st.warning("No detections found. Run **Real-Time Detection** first, or define a crop in **Data Lab**.")
     st.stop()
 
-
-# For each detection, compute median depth inside the bounding box
-import pandas as pd
+if focal <= 0:
+    st.warning("Focal length is 0 — cannot compute depth. Upload a valid config in **Data Lab**.")
+    st.stop()
 
 rows = []
-det_overlay = img_l.copy() if all_dets and all_dets[0][0] == "Crop (left)" else img_r.copy()
+det_overlay = img_l.copy()
 
 for source, dx1, dy1, dx2, dy2, lbl, conf in all_dets:
     dx1, dy1, dx2, dy2 = int(dx1), int(dy1), int(dx2), int(dy2)
 
     # Clamp to image bounds
     H, W = depth_map.shape[:2]
-    dx1c = max(0, min(dx1, W-1))
-    dy1c = max(0, min(dy1, H-1))
+    dx1c = max(0, min(dx1, W - 1))
+    dy1c = max(0, min(dy1, H - 1))
     dx2c = max(0, min(dx2, W))
     dy2c = max(0, min(dy2, H))
 
@@ -272,41 +288,40 @@ for source, dx1, dy1, dx2, dy2, lbl, conf in all_dets:
     roi_valid = roi_depth[roi_depth > 0]
 
     if len(roi_valid) > 0:
-        med_depth = float(np.median(roi_valid))
+        med_depth  = float(np.median(roi_valid))
         mean_depth = float(np.mean(roi_valid))
-        med_disp  = float(np.median(roi_disp[roi_disp > 0])) if (roi_disp > 0).any() else 0
+        med_disp   = float(np.median(roi_disp[roi_disp > 0])) if (roi_disp > 0).any() else 0
     else:
         med_depth = mean_depth = med_disp = 0.0
 
-    # Ground truth depth at this region (for comparison)
+    # Ground truth depth at this region
     gt_depth_val = 0.0
     if gt_left is not None:
         gt_roi = gt_left[dy1c:dy2c, dx1c:dx2c]
         gt_roi_valid = gt_roi[np.isfinite(gt_roi) & (gt_roi > 0)]
         if len(gt_roi_valid) > 0:
-            # Convert GT disparity → depth
-            gt_med_disp = float(np.median(gt_roi_valid))
+            gt_med_disp  = float(np.median(gt_roi_valid))
             gt_depth_val = (focal * baseline) / (gt_med_disp + doffs) if (gt_med_disp + doffs) > 0 else 0
 
-    error_mm = abs(med_depth - gt_depth_val) if gt_depth_val > 0 else float('nan')
+    error_mm = abs(med_depth - gt_depth_val) if gt_depth_val > 0 else float("nan")
 
     rows.append({
-        "Source":           source,
-        "Box":              f"({dx1},{dy1})→({dx2},{dy2})",
-        "Confidence":       f"{conf:.1%}" if isinstance(conf, float) else str(conf),
-        "Med Disparity":    f"{med_disp:.1f} px",
-        "Med Depth":        f"{med_depth:.0f} mm",
-        "Mean Depth":       f"{mean_depth:.0f} mm",
-        "GT Depth":         f"{gt_depth_val:.0f} mm" if gt_depth_val > 0 else "N/A",
-        "Error":            f"{error_mm:.0f} mm" if not np.isnan(error_mm) else "N/A",
+        "Source":        source,
+        "Box":           f"({dx1},{dy1})→({dx2},{dy2})",
+        "Confidence":    f"{conf:.1%}" if isinstance(conf, float) else str(conf),
+        "Med Disparity": f"{med_disp:.1f} px",
+        "Med Depth":     f"{med_depth:.0f} mm",
+        "Mean Depth":    f"{mean_depth:.0f} mm",
+        "GT Depth":      f"{gt_depth_val:.0f} mm" if gt_depth_val > 0 else "N/A",
+        "Error":         f"{error_mm:.0f} mm" if not np.isnan(error_mm) else "N/A",
     })
 
     # Draw on overlay
     color = (0, 255, 0) if "RCE" in source else (0, 0, 255) if "CNN" in source else (255, 255, 0)
     cv2.rectangle(det_overlay, (dx1c, dy1c), (dx2c, dy2c), color, 2)
-    depth_str = f"{med_depth/1000:.2f}m" if med_depth > 0 else "?"
+    depth_str = f"{med_depth / 1000:.2f}m" if med_depth > 0 else "?"
     cv2.putText(det_overlay, f"{source} {depth_str}",
-                (dx1c, dy1c - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                (dx1c, max(dy1c - 6, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
 # Show overlay
 st.image(cv2.cvtColor(det_overlay, cv2.COLOR_BGR2RGB),
@@ -316,7 +331,7 @@ st.image(cv2.cvtColor(det_overlay, cv2.COLOR_BGR2RGB),
 # Table
 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-# Big metric cards for the best detection
+# Primary detection summary
 if rows:
     best = rows[0]
     st.divider()
