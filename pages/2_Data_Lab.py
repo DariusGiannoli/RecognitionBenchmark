@@ -18,11 +18,25 @@ col1, col2 = st.columns(2)
 
 with col1:
     up_l = st.file_uploader("Left Image (Reference)", type=['png', 'jpg', 'jpeg'])
+    if up_l:
+        img_l_preview = cv2.imdecode(np.frombuffer(up_l.read(), np.uint8), cv2.IMREAD_COLOR)
+        up_l.seek(0)
+        st.image(cv2.cvtColor(img_l_preview, cv2.COLOR_BGR2RGB), caption="Left Image Preview", use_container_width=True)
     up_conf = st.file_uploader("Camera Config (.txt or .conf)", type=['txt', 'conf'])
 
 with col2:
     up_r = st.file_uploader("Right Image (Stereo Match)", type=['png', 'jpg', 'jpeg'])
+    if up_r:
+        img_r_preview = cv2.imdecode(np.frombuffer(up_r.read(), np.uint8), cv2.IMREAD_COLOR)
+        up_r.seek(0)
+        st.image(cv2.cvtColor(img_r_preview, cv2.COLOR_BGR2RGB), caption="Right Image Preview", use_container_width=True)
     up_gt = st.file_uploader("Ground Truth Depth (.npy)", type=['npy'])
+    if up_gt:
+        gt_preview = np.load(io.BytesIO(up_gt.read()))
+        up_gt.seek(0)
+        gt_vis_preview = np.nan_to_num(gt_preview, nan=0.0, posinf=np.nanmax(gt_preview[np.isfinite(gt_preview)]))
+        gt_vis_preview = gt_vis_preview / np.max(gt_vis_preview)
+        st.image(gt_vis_preview, caption="Ground Truth Depth Preview (Normalized)", use_container_width=True)
 
 # --- 2. Processing and Display ---
 if up_l and up_r and up_conf and up_gt:
