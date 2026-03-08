@@ -1,7 +1,14 @@
 streamlit
 opencv-python-headless
-ultralytics
-pandas
 numpy
-tqdm
+pandas
 scipy
+tqdm
+plotly
+torch
+torchvision
+timm
+scikit-learn
+joblib
+Pillow
+ultralytics
