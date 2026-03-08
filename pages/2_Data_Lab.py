@@ -1,96 +1,78 @@
 import streamlit as st
 import cv2
 import numpy as np
+import io
 
-# Set page configuration to match your app's theme
 st.set_page_config(page_title="Data Lab", layout="wide")
 
-st.title("🦅 Data Lab: Stereo Preparation")
-st.write("Upload your stereo pair and configure augmentations to create a training batch.")
+st.title("🧪 Data Lab: Stereo Asset Loader")
+st.write("Upload your stereo images, camera configuration, and ground truth depth map.")
 
-# 1. Initialize session state for batch storage
-# This ensures the batch persists as you navigate between pages
-if 'augmented_batch' not in st.session_state:
-    st.session_state['augmented_batch'] = []
-if 'stereo_pair' not in st.session_state:
-    st.session_state['stereo_pair'] = {"left": None, "right": None}
+# --- Session State Initialization ---
+if 'pipeline_data' not in st.session_state:
+    st.session_state['pipeline_data'] = {}
 
-# 2. Sidebar Parameters for Augmentation
-# Users can interactively set the "stress test" limits for the models
-st.sidebar.header("Augmentation Settings")
-noise_intensity = st.sidebar.slider("Max Noise Intensity", 0.0, 1.0, 0.1)
-brightness_range = st.sidebar.slider("Brightness Range", 0.5, 2.0, (0.8, 1.2))
-rotation_range = st.sidebar.slider("Rotation Range (deg)", -45, 45, (-5, 5))
-batch_size = st.sidebar.number_input("Batch Size to Generate", min_value=1, max_value=100, value=20)
-
-def apply_augmentations(img, noise, bright, rot):
-    """Applies CV2-based augmentations to a single image."""
-    # Rotation
-    h, w = img.shape[:2]
-    M = cv2.getRotationMatrix2D((w//2, h//2), rot, 1.0)
-    img = cv2.warpAffine(img, M, (w, h))
-    
-    # Brightness adjustment
-    img = cv2.convertScaleAbs(img, alpha=bright, beta=0)
-    
-    # Add Gaussian Noise
-    if noise > 0:
-        gauss = np.random.normal(0, noise * 255, img.shape).astype('uint8')
-        img = cv2.add(img, gauss)
-    
-    return img
-
-# 3. Stereo Image Uploaders
+# --- 1. File Uploaders ---
+st.subheader("Step 1: Upload Assets")
 col1, col2 = st.columns(2)
-up_l = col1.file_uploader("Upload Left Image", type=['jpg', 'png'])
-up_r = col2.file_uploader("Upload Right Image", type=['jpg', 'png'])
 
-if up_l and up_r:
-    # Read Images into OpenCV format
-    l_bytes = np.asarray(bytearray(up_l.read()), dtype=np.uint8)
-    img_l = cv2.imdecode(l_bytes, 1)
+with col1:
+    up_l = st.file_uploader("Left Image (Reference)", type=['png', 'jpg', 'jpeg'])
+    up_conf = st.file_uploader("Camera Config (.txt or .conf)", type=['txt', 'conf'])
+
+with col2:
+    up_r = st.file_uploader("Right Image (Stereo Match)", type=['png', 'jpg', 'jpeg'])
+    up_gt = st.file_uploader("Ground Truth Depth (.npy)", type=['npy'])
+
+# --- 2. Processing and Display ---
+if up_l and up_r and up_conf and up_gt:
+    # Read Images
+    img_l = cv2.imdecode(np.frombuffer(up_l.read(), np.uint8), cv2.IMREAD_COLOR)
+    img_r = cv2.imdecode(np.frombuffer(up_r.read(), np.uint8), cv2.IMREAD_COLOR)
     
-    r_bytes = np.asarray(bytearray(up_r.read()), dtype=np.uint8)
-    img_r = cv2.imdecode(r_bytes, 1)
+    # Read Config (as text)
+    conf_content = up_conf.read().decode("utf-8")
     
-    # Store originals in session state
-    st.session_state['stereo_pair'] = {"left": img_l, "right": img_r}
-    
-    # Display Original Pair
-    st.subheader("Original Stereo Pair")
-    c1, c2 = st.columns(2)
-    c1.image(cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB), caption="Left Channel")
-    c2.image(cv2.cvtColor(img_r, cv2.COLOR_BGR2RGB), caption="Right Channel")
-    
-    # 4. Interactive Live Preview
-    st.subheader("Augmentation Preview")
-    st.info("Adjust the sliders in the sidebar to see real-time effects on your data.")
-    
-    preview_l = apply_augmentations(img_l.copy(), noise_intensity, brightness_range[1], rotation_range[1])
-    preview_r = apply_augmentations(img_r.copy(), noise_intensity, brightness_range[1], rotation_range[1])
-    
-    p1, p2 = st.columns(2)
-    p1.image(cv2.cvtColor(preview_l, cv2.COLOR_BGR2RGB), caption="Augmented Left Preview")
-    p2.image(cv2.cvtColor(preview_r, cv2.COLOR_BGR2RGB), caption="Augmented Right Preview")
-    
-    # 5. Batch Generation Button
-    if st.button("🚀 Generate & Store Training Batch"):
-        new_batch = []
-        progress_bar = st.progress(0)
+    # Read Ground Truth (.npy)
+    # Note: Using BytesIO to allow numpy to load from the uploaded file buffer
+    gt_depth = np.load(io.BytesIO(up_gt.read()))
+
+    st.success("✅ All assets loaded successfully!")
+
+    # --- 3. Asset Visualization ---
+    st.divider()
+    st.subheader("Step 2: Asset Visualization")
+
+    # Display Stereo Pair
+    st.write("### 📸 Stereo Pair")
+    v_col1, v_col2 = st.columns(2)
+    v_col1.image(cv2.cvtColor(img_l, cv2.COLOR_BGR2RGB), caption="Left View (Reference)", use_container_width=True)
+    v_col2.image(cv2.cvtColor(img_r, cv2.COLOR_BGR2RGB), caption="Right View (Stereo)", use_container_width=True)
+
+    # Display Ground Truth and Config Info
+    st.write("### 📊 Depth & Metadata")
+    v_col3, v_col4 = st.columns([2, 1])
+
+    with v_col3:
+        # Normalize depth map for visualization (colors: purple = near, yellow = far)
+        # Handle potential NaNs or Inf in depth data
+        gt_vis = np.nan_to_num(gt_depth, nan=0.0, posinf=np.nanmax(gt_depth[np.isfinite(gt_depth)]))
+        st.image(gt_vis / np.max(gt_vis), caption="Ground Truth Depth Map (Normalized)", use_container_width=True)
         
-        for i in range(batch_size):
-            # Randomly pick values within the user-defined slider ranges
-            n = np.random.uniform(0, noise_intensity)
-            b = np.random.uniform(brightness_range[0], brightness_range[1])
-            r = np.random.uniform(rotation_range[0], rotation_range[1])
-            
-            aug_l = apply_augmentations(img_l.copy(), n, b, r)
-            aug_r = apply_augmentations(img_r.copy(), n, b, r)
-            
-            # Store as pairs for stereo training
-            new_batch.append({"left": aug_l, "right": aug_r})
-            progress_bar.progress((i + 1) / batch_size)
-        
-        # Save to memory
-        st.session_state['augmented_batch'] = new_batch
-        st.success(f"Created {len(new_batch)} augmented samples. Ready for Model Tuning!")
+
+    with v_col4:
+        st.info("📄 Configuration File Content")
+        st.text_area("Raw Config", conf_content, height=300)
+
+    # --- 4. Store for Next Pages ---
+    if st.button("🚀 Lock Data & Proceed to Benchmark"):
+        st.session_state['pipeline_data'] = {
+            "left": img_l,
+            "right": img_r,
+            "gt": gt_depth,
+            "conf_raw": conf_content
+        }
+        st.success("Data stored in session! Move to the 'Recognition' or 'Tuning' page.")
+
+else:
+    st.info("Please upload all 4 files to proceed with the perception pipeline.")
