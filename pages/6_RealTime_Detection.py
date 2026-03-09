@@ -24,15 +24,22 @@ right_img    = assets["right"]
 crop         = assets["crop"]
 crop_aug     = assets.get("crop_aug", crop)
 bbox         = assets.get("crop_bbox", (0, 0, crop.shape[1], crop.shape[0]))
+rois         = assets.get("rois", [{"label": "object", "bbox": bbox,
+                                    "crop": crop, "crop_aug": crop_aug}])
 active_mods  = st.session_state.get("active_modules", {k: True for k in REGISTRY})
 
 x0, y0, x1, y1 = bbox
 win_h, win_w = y1 - y0, x1 - x0   # window = same size as crop
 
+# Color palette for multi-class drawing
+CLASS_COLORS = [(0,255,0),(0,0,255),(255,165,0),(255,0,255),(0,255,255),
+                (128,255,0),(255,128,0),(0,128,255)]
+
 rce_head = st.session_state.get("rce_head")
 has_any_cnn = any(f"cnn_head_{n}" in st.session_state for n in BACKBONES)
+has_orb = "orb_refs" in st.session_state
 
-if rce_head is None and not has_any_cnn:
+if rce_head is None and not has_any_cnn and not has_orb:
     st.warning("No trained heads found. Go to **Model Tuning** and train at least one head.")
     st.stop()
 
@@ -77,8 +84,8 @@ def sliding_window_detect(
         feats = feature_fn(patch)
         label, conf = head.predict(feats)
 
-        # Fill heatmap with object confidence
-        if label == "object":
+        # Fill heatmap with non-background confidence
+        if label != "background":
             heatmap[y:y+win_h, x:x+win_w] = np.maximum(
                 heatmap[y:y+win_h, x:x+win_w], conf)
             if conf >= conf_thresh:
@@ -167,7 +174,7 @@ st.divider()
 # ===================================================================
 #  Side-by-side layout
 # ===================================================================
-col_rce, col_cnn = st.columns(2)
+col_rce, col_cnn, col_orb = st.columns(3)
 
 # -------------------------------------------------------------------
 #  LEFT — RCE Detection
@@ -194,10 +201,13 @@ with col_rce:
 
             # Final image with boxes
             final = right_img.copy()
+            class_labels = sorted(set(d[4] for d in dets)) if dets else []
             for x1d, y1d, x2d, y2d, lbl, cf in dets:
-                cv2.rectangle(final, (x1d, y1d), (x2d, y2d), (0, 255, 0), 2)
-                cv2.putText(final, f"{cf:.0%}", (x1d, y1d - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                ci = class_labels.index(lbl) if lbl in class_labels else 0
+                clr = CLASS_COLORS[ci % len(CLASS_COLORS)]
+                cv2.rectangle(final, (x1d, y1d), (x2d, y2d), clr, 2)
+                cv2.putText(final, f"{lbl} {cf:.0%}", (x1d, y1d - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, clr, 1)
             rce_live.image(cv2.cvtColor(final, cv2.COLOR_BGR2RGB),
                            caption="RCE — Final Detections",
                            use_container_width=True)
@@ -263,10 +273,13 @@ with col_cnn:
 
             # Final image
             final = right_img.copy()
+            class_labels = sorted(set(d[4] for d in dets)) if dets else []
             for x1d, y1d, x2d, y2d, lbl, cf in dets:
-                cv2.rectangle(final, (x1d, y1d), (x2d, y2d), (0, 0, 255), 2)
-                cv2.putText(final, f"{cf:.0%}", (x1d, y1d - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                ci = class_labels.index(lbl) if lbl in class_labels else 0
+                clr = CLASS_COLORS[ci % len(CLASS_COLORS)]
+                cv2.rectangle(final, (x1d, y1d), (x2d, y2d), clr, 2)
+                cv2.putText(final, f"{lbl} {cf:.0%}", (x1d, y1d - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, clr, 1)
             cnn_live.image(cv2.cvtColor(final, cv2.COLOR_BGR2RGB),
                            caption=f"{selected} — Final Detections",
                            use_container_width=True)
@@ -297,42 +310,146 @@ with col_cnn:
             st.session_state["cnn_det_ms"] = ms
 
 
+# -------------------------------------------------------------------
+#  RIGHT — ORB Detection
+# -------------------------------------------------------------------
+with col_orb:
+    st.header("🏛️ ORB Detection")
+    if not has_orb:
+        st.info("No ORB reference trained. Train one in **Model Tuning**.")
+    else:
+        orb_det   = st.session_state["orb_detector"]
+        orb_refs  = st.session_state["orb_refs"]
+        dt_thresh = st.session_state.get("orb_dist_thresh", 70)
+        min_m     = st.session_state.get("orb_min_matches", 5)
+        st.caption(f"References: {', '.join(orb_refs.keys())}  |  "
+                   f"dist<{dt_thresh}, min {min_m} matches")
+        orb_run = st.button("▶ Run ORB Scan", key="orb_run")
+
+        orb_progress = st.empty()
+        orb_live     = st.empty()
+        orb_results  = st.container()
+
+        if orb_run:
+            H, W = right_img.shape[:2]
+            positions = [(x, y)
+                         for y in range(0, H - win_h + 1, stride)
+                         for x in range(0, W - win_w + 1, stride)]
+            n_total = len(positions)
+            heatmap = np.zeros((H, W), dtype=np.float32)
+            detections = []
+            t0 = time.perf_counter()
+
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+            for idx, (px, py) in enumerate(positions):
+                patch = right_img[py:py+win_h, px:px+win_w]
+                gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+                gray = clahe.apply(gray)
+                kp, des = orb_det.orb.detectAndCompute(gray, None)
+
+                if des is not None:
+                    best_label, best_conf = "background", 0.0
+                    for lbl, ref in orb_refs.items():
+                        if ref["descriptors"] is None:
+                            continue
+                        matches = orb_det.bf.match(ref["descriptors"], des)
+                        good = [m for m in matches if m.distance < dt_thresh]
+                        conf = min(len(good) / max(min_m, 1), 1.0)
+                        if len(good) >= min_m and conf > best_conf:
+                            best_label, best_conf = lbl, conf
+
+                    if best_label != "background":
+                        heatmap[py:py+win_h, px:px+win_w] = np.maximum(
+                            heatmap[py:py+win_h, px:px+win_w], best_conf)
+                        if best_conf >= conf_thresh:
+                            detections.append(
+                                (px, py, px+win_w, py+win_h, best_label, best_conf))
+
+                if idx % 5 == 0 or idx == n_total - 1:
+                    orb_progress.progress((idx+1)/n_total,
+                                          text=f"Window {idx+1}/{n_total}")
+
+            total_ms = (time.perf_counter() - t0) * 1000
+            if detections:
+                detections = _nms(detections, nms_iou)
+
+            final = right_img.copy()
+            cls_labels = sorted(set(d[4] for d in detections)) if detections else []
+            for x1d, y1d, x2d, y2d, lbl, cf in detections:
+                ci = cls_labels.index(lbl) if lbl in cls_labels else 0
+                clr = CLASS_COLORS[ci % len(CLASS_COLORS)]
+                cv2.rectangle(final, (x1d, y1d), (x2d, y2d), clr, 2)
+                cv2.putText(final, f"{lbl} {cf:.0%}", (x1d, y1d - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, clr, 1)
+            orb_live.image(cv2.cvtColor(final, cv2.COLOR_BGR2RGB),
+                           caption="ORB — Final Detections",
+                           use_container_width=True)
+            orb_progress.empty()
+
+            with orb_results:
+                om1, om2, om3, om4 = st.columns(4)
+                om1.metric("Detections", len(detections))
+                om2.metric("Windows", n_total)
+                om3.metric("Total Time", f"{total_ms:.0f} ms")
+                om4.metric("Per Window", f"{total_ms/max(n_total,1):.2f} ms")
+
+                if heatmap.max() > 0:
+                    hmap_color = cv2.applyColorMap(
+                        (heatmap / heatmap.max() * 255).astype(np.uint8),
+                        cv2.COLORMAP_JET)
+                    blend = cv2.addWeighted(right_img, 0.5, hmap_color, 0.5, 0)
+                    st.image(cv2.cvtColor(blend, cv2.COLOR_BGR2RGB),
+                             caption="ORB — Confidence Heatmap",
+                             use_container_width=True)
+
+                if detections:
+                    import pandas as pd
+                    df = pd.DataFrame(detections,
+                                      columns=["x1","y1","x2","y2","label","conf"])
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+
+            st.session_state["orb_dets"] = detections
+            st.session_state["orb_det_ms"] = total_ms
+
+
 # ===================================================================
-#  Bottom — Comparison (if both have run)
+#  Bottom — Comparison (if any two have run)
 # ===================================================================
 rce_dets = st.session_state.get("rce_dets")
 cnn_dets = st.session_state.get("cnn_dets")
+orb_dets = st.session_state.get("orb_dets")
 
-if rce_dets is not None and cnn_dets is not None:
+methods = {}
+if rce_dets is not None:
+    methods["RCE"] = (rce_dets, st.session_state.get("rce_det_ms", 0), (0,255,0))
+if cnn_dets is not None:
+    methods["CNN"] = (cnn_dets, st.session_state.get("cnn_det_ms", 0), (0,0,255))
+if orb_dets is not None:
+    methods["ORB"] = (orb_dets, st.session_state.get("orb_det_ms", 0), (255,165,0))
+
+if len(methods) >= 2:
     st.divider()
     st.subheader("📊 Side-by-Side Comparison")
 
     import pandas as pd
-    comp = pd.DataFrame({
-        "Metric": ["Detections", "Best Confidence", "Total Time (ms)"],
-        "RCE": [
-            len(rce_dets),
-            f"{max((d[5] for d in rce_dets), default=0):.1%}",
-            f"{st.session_state.get('rce_det_ms', 0):.0f}",
-        ],
-        "CNN": [
-            len(cnn_dets),
-            f"{max((d[5] for d in cnn_dets), default=0):.1%}",
-            f"{st.session_state.get('cnn_det_ms', 0):.0f}",
-        ],
-    })
-    st.dataframe(comp, use_container_width=True, hide_index=True)
+    comp = {"Metric": ["Detections", "Best Confidence", "Total Time (ms)"]}
+    for name, (dets, ms, _) in methods.items():
+        comp[name] = [
+            len(dets),
+            f"{max((d[5] for d in dets), default=0):.1%}",
+            f"{ms:.0f}",
+        ]
+    st.dataframe(pd.DataFrame(comp), use_container_width=True, hide_index=True)
 
-    # Overlay both on one image
+    # Overlay all methods on one image
     overlay = right_img.copy()
-    for x1d, y1d, x2d, y2d, _, cf in rce_dets:
-        cv2.rectangle(overlay, (x1d, y1d), (x2d, y2d), (0, 255, 0), 2)
-        cv2.putText(overlay, f"RCE {cf:.0%}", (x1d, y1d - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-    for x1d, y1d, x2d, y2d, _, cf in cnn_dets:
-        cv2.rectangle(overlay, (x1d, y1d), (x2d, y2d), (0, 0, 255), 2)
-        cv2.putText(overlay, f"CNN {cf:.0%}", (x1d, y2d + 12),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+    for name, (dets, _, clr) in methods.items():
+        for x1d, y1d, x2d, y2d, lbl, cf in dets:
+            cv2.rectangle(overlay, (x1d, y1d), (x2d, y2d), clr, 2)
+            cv2.putText(overlay, f"{name}:{lbl} {cf:.0%}", (x1d, y1d - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, clr, 1)
+    legend = " | ".join(f"{n}={'green' if c==(0,255,0) else 'blue' if c==(0,0,255) else 'orange'}"
+                        for n, (_, _, c) in methods.items())
     st.image(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB),
-             caption="Green = RCE  |  Blue = CNN",
-             use_container_width=True)
+             caption=legend, use_container_width=True)

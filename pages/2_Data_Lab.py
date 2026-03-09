@@ -146,31 +146,85 @@ if up_l and up_r and up_conf and up_gt_l and up_gt_r:
         st.text_area("Raw Config", conf_content, height=200)
 
     # -----------------------------------------------------------------------
-    # Step 3 — Crop ROI from Left Image
+    # Step 3 — Crop ROI(s) from Left Image  (Multi-Object)
     # -----------------------------------------------------------------------
     st.divider()
-    st.subheader("Step 3: Crop Region of Interest")
-    st.write("Define the bounding box of the object you want to recognise (pixels).")
+    st.subheader("Step 3: Crop Region(s) of Interest")
+    st.write("Define one or more bounding boxes — each becomes a separate class for recognition.")
 
     H, W = img_l.shape[:2]
-    cr1, cr2, cr3, cr4 = st.columns(4)
-    x0 = cr1.number_input("X start", 0, W - 2, 0, step=1)
-    y0 = cr2.number_input("Y start", 0, H - 2, 0, step=1)
-    x1 = cr3.number_input("X end",   int(x0) + 1, W, min(W, int(x0) + 100), step=1)
-    y1 = cr4.number_input("Y end",   int(y0) + 1, H, min(H, int(y0) + 100), step=1)
 
-    x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+    # Manage list of ROIs in session state
+    if "rois" not in st.session_state:
+        st.session_state["rois"] = [{"label": "object", "x0": 0, "y0": 0,
+                                      "x1": min(W, 100), "y1": min(H, 100)}]
 
-    # Overlay rectangle on left image
+    def _add_roi():
+        st.session_state["rois"].append(
+            {"label": f"object_{len(st.session_state['rois'])+1}",
+             "x0": 0, "y0": 0,
+             "x1": min(W, 100), "y1": min(H, 100)})
+
+    def _remove_roi(idx):
+        if len(st.session_state["rois"]) > 1:
+            st.session_state["rois"].pop(idx)
+
+    ROI_COLORS = [(0,255,0), (255,0,0), (0,0,255), (255,255,0),
+                  (255,0,255), (0,255,255), (128,255,0), (255,128,0)]
+
+    for i, roi in enumerate(st.session_state["rois"]):
+        color = ROI_COLORS[i % len(ROI_COLORS)]
+        color_hex = "#{:02x}{:02x}{:02x}".format(*color)
+        with st.container(border=True):
+            hc1, hc2, hc3 = st.columns([3, 6, 1])
+            hc1.markdown(f"**ROI {i+1}** <span style='color:{color_hex}'>■</span>",
+                         unsafe_allow_html=True)
+            roi["label"] = hc2.text_input("Class Label", roi["label"],
+                                           key=f"roi_lbl_{i}")
+            if len(st.session_state["rois"]) > 1:
+                hc3.button("✕", key=f"roi_del_{i}",
+                           on_click=_remove_roi, args=(i,))
+
+            cr1, cr2, cr3, cr4 = st.columns(4)
+            roi["x0"] = int(cr1.number_input("X start", 0, W-2, int(roi["x0"]),
+                                              step=1, key=f"roi_x0_{i}"))
+            roi["y0"] = int(cr2.number_input("Y start", 0, H-2, int(roi["y0"]),
+                                              step=1, key=f"roi_y0_{i}"))
+            roi["x1"] = int(cr3.number_input("X end", roi["x0"]+1, W,
+                                              min(W, int(roi["x1"])),
+                                              step=1, key=f"roi_x1_{i}"))
+            roi["y1"] = int(cr4.number_input("Y end", roi["y0"]+1, H,
+                                              min(H, int(roi["y1"])),
+                                              step=1, key=f"roi_y1_{i}"))
+
+    st.button("➕ Add Another ROI", on_click=_add_roi)
+
+    # Draw all ROIs on the image
     overlay = img_l.copy()
-    cv2.rectangle(overlay, (x0, y0), (x1, y1), (0, 255, 0), 2)
-    crop_bgr = img_l[y0:y1, x0:x1].copy()
+    crops = []
+    for i, roi in enumerate(st.session_state["rois"]):
+        color = ROI_COLORS[i % len(ROI_COLORS)]
+        x0, y0, x1, y1 = roi["x0"], roi["y0"], roi["x1"], roi["y1"]
+        cv2.rectangle(overlay, (x0, y0), (x1, y1), color, 2)
+        cv2.putText(overlay, roi["label"], (x0, y0 - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        crops.append(img_l[y0:y1, x0:x1].copy())
 
-    ov1, ov2 = st.columns([3, 1])
+    ov1, ov2 = st.columns([3, 2])
     ov1.image(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB),
-              caption="Left Image — ROI highlighted", use_container_width=True)
-    ov2.image(cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB),
-              caption="Crop", use_container_width=True)
+              caption="Left Image — ROIs highlighted", use_container_width=True)
+    with ov2:
+        for i, (c, roi) in enumerate(zip(crops, st.session_state["rois"])):
+            st.image(cv2.cvtColor(c, cv2.COLOR_BGR2RGB),
+                     caption=f"{roi['label']} ({c.shape[1]}×{c.shape[0]})",
+                     width=160)
+
+    # For backward compatibility: first ROI is the "primary"
+    crop_bgr = crops[0]
+    x0, y0, x1, y1 = (st.session_state["rois"][0]["x0"],
+                       st.session_state["rois"][0]["y0"],
+                       st.session_state["rois"][0]["x1"],
+                       st.session_state["rois"][0]["y1"])
 
     # -----------------------------------------------------------------------
     # Step 4 — Data Augmentation
@@ -195,28 +249,49 @@ if up_l and up_r and up_conf and up_gt_l and up_gt_r:
     aug = augment(crop_bgr, brightness, contrast, rotation,
                   flip_h, flip_v, noise, blur, shift_x, shift_y)
 
+    # Apply same augmentation to all crops
+    all_augs = [augment(c, brightness, contrast, rotation,
+                        flip_h, flip_v, noise, blur, shift_x, shift_y)
+                for c in crops]
+
     aug_col1, aug_col2 = st.columns(2)
     aug_col1.image(cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB),
-                   caption="Original Crop", use_container_width=True)
+                   caption="Original Crop (ROI 1)", use_container_width=True)
     aug_col2.image(cv2.cvtColor(aug, cv2.COLOR_BGR2RGB),
-                   caption="Augmented Crop", use_container_width=True)
+                   caption="Augmented Crop (ROI 1)", use_container_width=True)
+
+    if len(crops) > 1:
+        st.caption(f"Augmentation applied identically to all {len(crops)} ROIs.")
 
     # -----------------------------------------------------------------------
     # Step 5 — Lock & Store
     # -----------------------------------------------------------------------
     st.divider()
     if st.button("🚀 Lock Data & Proceed to Benchmark"):
+        rois_data = []
+        for i, roi in enumerate(st.session_state["rois"]):
+            rois_data.append({
+                "label":    roi["label"],
+                "bbox":     (roi["x0"], roi["y0"], roi["x1"], roi["y1"]),
+                "crop":     crops[i],
+                "crop_aug": all_augs[i],
+            })
+
         st.session_state["pipeline_data"] = {
             "left":       img_l,
             "right":      img_r,
             "gt_left":    gt_depth_l,
             "gt_right":   gt_depth_r,
             "conf_raw":   conf_content,
+            # Backward compatibility: first ROI
             "crop":       crop_bgr,
             "crop_aug":   aug,
             "crop_bbox":  (x0, y0, x1, y1),
+            # Multi-object
+            "rois":       rois_data,
         }
-        st.success("Data stored in session! Move to the 'Recognition' or 'Tuning' page.")
+        st.success(f"Data stored with **{len(rois_data)} ROI(s)**! "
+                   f"Move to Feature Lab.")
 
 else:
     st.info("Please upload all 5 files (left image, right image, config, left GT, right GT) to proceed.")

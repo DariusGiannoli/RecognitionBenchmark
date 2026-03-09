@@ -16,26 +16,31 @@ st.divider()
 # ===================================================================
 st.header("🗺️ Pipeline Overview")
 st.markdown("""
-The app is structured as a **5-stage sequential pipeline**.
+The app is structured as a **7-stage sequential pipeline**.
 Complete each page in order — every stage feeds the next.
 """)
 
 stages = [
     ("🧪", "1 · Data Lab",          "Upload a stereo image pair, camera calibration file, and two PFM ground-truth depth maps. "
-                                      "Define an object ROI (bounding box), then apply live data augmentation "
+                                      "Define one or more object ROIs (bounding boxes) with class labels, then apply live data augmentation "
                                       "(brightness, contrast, rotation, noise, blur, shift, flip). "
                                       "All assets are locked into session state — nothing is written to disk."),
     ("🔬", "2 · Feature Lab",        "Toggle RCE physics modules (Intensity · Sobel · Spectral) to build a modular "
                                       "feature vector. Compare it live against CNN activation maps extracted from a "
                                       "frozen backbone via forward hooks. Lock your active module configuration."),
     ("⚙️", "3 · Model Tuning",       "Train lightweight **heads** on your session data (augmented crop = positives, "
-                                      "random non-overlapping patches from the scene = negatives). "
-                                      "Both RCE and CNN heads are trained identically with LogisticRegression "
-                                      "and stored in session state only — no disk writes."),
-    ("🎯", "4 · Real-Time Detection","Run a **sliding window** across the right image using both the RCE head and "
-                                      "your chosen CNN head simultaneously. Watch the scan live, then compare "
-                                      "bounding boxes, confidence heatmaps, and latency."),
-    ("📐", "5 · Stereo Geometry",    "Compute a disparity map with **StereoSGBM**, convert it to metric depth "
+                                      "random non-overlapping patches = negatives). Compare three paradigms side by side: "
+                                      "RCE (with feature importance), CNN (with activation overlay), and ORB (keypoint matching)."),
+    ("🔍", "4 · Localization Lab",   "Compare **five localization strategies** on top of your trained head: "
+                                      "Exhaustive Sliding Window, Image Pyramid (multi-scale), Coarse-to-Fine "
+                                      "hierarchical search, Contour Proposals (edge-driven), and Template "
+                                      "Matching (cross-correlation)."),
+    ("🎯", "5 · Real-Time Detection","Run a **sliding window** across the right image using RCE, CNN, and ORB "
+                                      "simultaneously. Watch the scan live, then compare bounding boxes, "
+                                      "confidence heatmaps, and latency across all three methods."),
+    ("📈", "6 · Evaluation",         "Quantitative evaluation with **confusion matrices**, **precision-recall curves**, "
+                                      "and **F1 scores** per method. Ground truth is derived from your Data Lab ROIs."),
+    ("📐", "7 · Stereo Geometry",    "Compute a disparity map with **StereoSGBM**, convert it to metric depth "
                                       "using the stereo formula $Z = fB/(d+d_{\\text{offs}})$, then read depth "
                                       "directly at every detected bounding box. Compare against PFM ground truth."),
 ]
