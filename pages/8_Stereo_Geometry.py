@@ -69,8 +69,10 @@ baseline = float(calib.get("baseline", 1.0))
 ndisp    = int(calib.get("ndisp", 128))
 
 if focal <= 0:
-    st.warning("Focal length is **0** — the camera config may be missing or malformed. "
-               "Depth values will be zero until you upload a valid Middlebury config in **Data Lab**.")
+    st.error("❌ Focal length is **0** — the camera config is missing or malformed. "
+            "Depth estimation cannot proceed. Return to **Data Lab** and upload a valid "
+            "Middlebury camera config.")
+    st.stop()
 
 st.subheader("Camera Calibration")
 cc1, cc2, cc3, cc4 = st.columns(4)

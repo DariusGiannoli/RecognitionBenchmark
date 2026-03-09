@@ -159,7 +159,7 @@ def rce_feature_fn(patch_bgr):
 # ===================================================================
 st.subheader("Sliding Window Parameters")
 p1, p2, p3 = st.columns(3)
-stride = p1.slider("Stride (px)", 4, max(win_w, win_h),
+stride = p1.slider("Stride (px)", 4, max(win_w // 2, 4),
                     max(win_w // 4, 4), step=2,
                     help="Lower = more windows = slower but finer")
 conf_thresh = p2.slider("Confidence Threshold", 0.5, 1.0, 0.7, 0.05)

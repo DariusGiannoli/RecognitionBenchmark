@@ -13,8 +13,7 @@ BIRD_YAML = BIRD_YOLO_DIR / "bird_data.yaml"
 # Model Paths
 MODEL_DIR = PROJECT_ROOT / "models"
 MODEL_PATHS = {
-    # 'yolo': MODEL_DIR / "yolov8n.pt",
-    'yolo' : PROJECT_ROOT / "volov8n.pt", 
+    'yolo' : MODEL_DIR / "yolov8n.pt",
     'resnet': MODEL_DIR / "resnet18.pth",
     'resnet_head': MODEL_DIR / "resnet18_head.pkl",
     'mobilenet': MODEL_DIR / "mobilenet_v3.pth",

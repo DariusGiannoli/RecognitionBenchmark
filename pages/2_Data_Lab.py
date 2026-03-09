@@ -100,8 +100,12 @@ with col1:
 
     up_gt_l = st.file_uploader("Left Ground Truth Depth (.pfm)", type=["pfm"])
     if up_gt_l:
-        gt_l_prev = read_pfm(up_gt_l.read());  up_gt_l.seek(0)
-        st.image(vis_depth(gt_l_prev), caption="Left GT Depth Preview", use_container_width=True)
+        try:
+            gt_l_prev = read_pfm(up_gt_l.read());  up_gt_l.seek(0)
+            st.image(vis_depth(gt_l_prev), caption="Left GT Depth Preview", use_container_width=True)
+        except (ValueError, Exception) as e:
+            st.error(f"❌ Invalid PFM file (left): {e}")
+            up_gt_l = None
 
 with col2:
     up_r = st.file_uploader("Right Image (Stereo Match)", type=["png", "jpg", "jpeg"])
@@ -112,8 +116,12 @@ with col2:
 
     up_gt_r = st.file_uploader("Right Ground Truth Depth (.pfm)", type=["pfm"])
     if up_gt_r:
-        gt_r_prev = read_pfm(up_gt_r.read());  up_gt_r.seek(0)
-        st.image(vis_depth(gt_r_prev), caption="Right GT Depth Preview", use_container_width=True)
+        try:
+            gt_r_prev = read_pfm(up_gt_r.read());  up_gt_r.seek(0)
+            st.image(vis_depth(gt_r_prev), caption="Right GT Depth Preview", use_container_width=True)
+        except (ValueError, Exception) as e:
+            st.error(f"❌ Invalid PFM file (right): {e}")
+            up_gt_r = None
 
 # ---------------------------------------------------------------------------
 # Step 2 — Full pipeline (requires all 5 files)
@@ -268,6 +276,9 @@ if up_l and up_r and up_conf and up_gt_l and up_gt_r:
     # -----------------------------------------------------------------------
     st.divider()
     if st.button("🚀 Lock Data & Proceed to Benchmark"):
+        if not st.session_state.get("rois") or len(st.session_state["rois"]) == 0:
+            st.error("❌ Define at least one ROI before locking!")
+            st.stop()
         rois_data = []
         for i, roi in enumerate(st.session_state["rois"]):
             rois_data.append({
