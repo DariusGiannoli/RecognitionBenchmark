@@ -12,6 +12,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import streamlit as st
 
 DEFAULT_MIDDLEBURY_ROOT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -30,6 +31,7 @@ BUNDLED_SCENES = {
 # Scanning
 # ------------------------------------------------------------------
 
+@st.cache_data
 def scan_dataset_root(root_path: str = DEFAULT_MIDDLEBURY_ROOT) -> list:
     """Return sorted list of scene names that contain im0.png, im1.png, calib.txt."""
     if not os.path.isdir(root_path):
@@ -45,6 +47,7 @@ def scan_dataset_root(root_path: str = DEFAULT_MIDDLEBURY_ROOT) -> list:
     return scenes
 
 
+@st.cache_data
 def get_scene_groups(root_path: str = DEFAULT_MIDDLEBURY_ROOT) -> dict:
     """Group scenes by base name (strip trailing digits)."""
     scenes = scan_dataset_root(root_path)
@@ -64,6 +67,7 @@ def get_available_views(scene_path: str) -> list:
 # Loading
 # ------------------------------------------------------------------
 
+@st.cache_data
 def load_stereo_pair(scene_path: str, view_suffix: str = "") -> dict:
     """Load left + right images, calibration and optional GT disparity."""
     left = cv2.imread(os.path.join(scene_path, f"im0{view_suffix}.png"),
@@ -83,6 +87,7 @@ def load_stereo_pair(scene_path: str, view_suffix: str = "") -> dict:
     }
 
 
+@st.cache_data
 def load_single_view(scene_path: str, view_suffix: str = "") -> np.ndarray:
     """Load and return im0{suffix}.png from a scene folder."""
     return cv2.imread(os.path.join(scene_path, f"im0{view_suffix}.png"),
@@ -93,6 +98,7 @@ def load_single_view(scene_path: str, view_suffix: str = "") -> np.ndarray:
 # Calibration parser
 # ------------------------------------------------------------------
 
+@st.cache_data
 def parse_calib(calib_path: str) -> dict:
     """
     Parse Middlebury ``calib.txt``.
@@ -128,6 +134,7 @@ def parse_calib(calib_path: str) -> dict:
 # PFM loader
 # ------------------------------------------------------------------
 
+@st.cache_data
 def load_pfm(filepath: str) -> np.ndarray:
     """Read a PFM (Portable FloatMap) and return a float32 ndarray."""
     with open(filepath, "rb") as f:
@@ -147,6 +154,7 @@ def load_pfm(filepath: str) -> np.ndarray:
         return np.flipud(data.copy())
 
 
+@st.cache_data
 def read_pfm_bytes(file_bytes: bytes) -> np.ndarray:
     """Parse PFM from raw bytes (uploaded file)."""
     buf = io.BytesIO(file_bytes)
