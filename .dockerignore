@@ -3,7 +3,9 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
-data/
+# Exclude raw/user data but keep the bundled Middlebury benchmark scenes
+data/*
+!data/middlebury/
 training/runs/
 results/logs/
 results/yolo/
