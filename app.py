@@ -191,10 +191,14 @@ in the benchmark at 256D.
     # -------------------------------------------------------------------
     st.header("📐 Stereo Depth Estimation")
 
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-        st.markdown("""
-**Algorithm:** `cv2.StereoSGBM` (Semi-Global Block Matching)
+    tab_sgbm, tab_dav2 = st.tabs(["StereoSGBM (Classical)", "Depth Anything V2 (NN)"])
+
+    with tab_sgbm:
+        st.markdown("### 📏 StereoSGBM — Semi-Global Block Matching")
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            st.markdown("""
+**Algorithm:** `cv2.StereoSGBM`
 
 SGBM minimises a global energy function combining:
 - Data cost (pixel intensity difference)
@@ -202,16 +206,51 @@ SGBM minimises a global energy function combining:
 
 It processes multiple horizontal and diagonal scan-line passes,
 making it significantly more accurate than basic block matching.
-        """)
-    with col_d2:
-        st.markdown("**Depth formula (Middlebury convention):**")
-        st.latex(r"Z = \frac{f \times B}{d + d_{\text{offs}}}")
-        st.markdown("""
+            """)
+        with col_d2:
+            st.markdown("**Depth formula (Middlebury convention):**")
+            st.latex(r"Z = \frac{f \times B}{d + d_{\text{offs}}}")
+            st.markdown("""
 - $f$ — focal length (pixels)
 - $B$ — baseline (mm, from calibration file)
 - $d$ — disparity (pixels)
-- $d_\\text{offs}$ — optical-center offset between cameras
-        """)
+- $d_{\\text{offs}}$ — optical-center offset between cameras
+            """)
+
+    with tab_dav2:
+        st.markdown("### 🤖 Depth Anything V2 Small — Monocular Depth NN")
+        col_n1, col_n2 = st.columns(2)
+        with col_n1:
+            st.markdown("""
+**Source:** HuggingFace — `depth-anything/Depth-Anything-V2-Small-hf`
+**Pre-training:** 62 M synthetic + real images (DA-2 dataset)
+**Architecture:** ViT-Small encoder + DPT decode head
+**Output:** Relative inverse-depth map (not metric)
+**Parameters:** ~24 M  |  **Weights:** ~100 MB
+**Inference:** CPU-only, ~300–500 ms at Middlebury resolution
+
+**In this app:** Used as a comparison baseline against StereoSGBM.
+Because the NN output is scale-agnostic, a **least-squares affine
+alignment** is applied before computing error metrics:
+            """)
+            st.latex(r"\hat{d} = \alpha \cdot d_{\text{NN}} + \beta")
+            st.markdown(r"where $\alpha, \beta$ are fitted over mutually valid pixels.")
+        with col_n2:
+            st.markdown("""
+**Why compare these?**
+
+| | StereoSGBM | Depth Anything V2 |
+|---|---|---|
+| **Input** | Stereo pair | Single image |
+| **Output** | Metric disparity | Relative depth |
+| **Speed** | ~50 ms | ~400 ms |
+| **Needs calibration** | ✅ Yes | ❌ No |
+| **Generalises to new scenes** | Limited | ✅ Strong |
+| **Error metric** | Direct MAE/RMSE | After alignment |
+
+The Stereo Stage shows both side-by-side with MAE, RMSE,
+and Bad-2.0 pixel error against the Middlebury ground truth.
+            """)
 
     st.divider()
     st.caption("Select a pipeline from the **sidebar** to begin.")
