@@ -211,12 +211,12 @@ def render():
                                               step=1, key=f"stereo_roi_x0_{i}"))
             roi["y0"] = int(cr2.number_input("Y start", 0, H-2, int(roi["y0"]),
                                               step=1, key=f"stereo_roi_y0_{i}"))
-            roi["x1"] = int(cr3.number_input("X end", roi["x0"]+1, W,
+            roi["x1"] = max(roi["x0"] + 1, int(cr3.number_input("X end", 1, W,
                                               min(W, int(roi["x1"])),
-                                              step=1, key=f"stereo_roi_x1_{i}"))
-            roi["y1"] = int(cr4.number_input("Y end", roi["y0"]+1, H,
+                                              step=1, key=f"stereo_roi_x1_{i}")))
+            roi["y1"] = max(roi["y0"] + 1, int(cr4.number_input("Y end", 1, H,
                                               min(H, int(roi["y1"])),
-                                              step=1, key=f"stereo_roi_y1_{i}"))
+                                              step=1, key=f"stereo_roi_y1_{i}")))
 
     st.button("➕ Add Another ROI", on_click=_add_roi,
               disabled=len(st.session_state["stereo_rois"]) >= 20,
